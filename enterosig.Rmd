@@ -1,0 +1,166 @@
+---
+title: "Enterosignatures HTN"
+author: "Li-Fang Yeo"
+date: "2024-10-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+```{r}
+library("NMF")
+library(magrittr)
+```
+```{r}
+devtools::load_all()
+```
+# Command line arguments
+```{r}
+args <- list(
+  optparse::make_option("--east", action="store_true", default=FALSE, help="Exclude Eastern Finland subpopulation [default \"%default\"]"),
+  optparse::make_option("--west", action="store_true", default=FALSE, help="Exclude Eastern Finland subpopulation [default \"%default\"]"),
+  optparse::make_option("--detection", type = "numeric", default = 0.1/100, help = "Detection limit [default %default]"),
+optparse::make_option("--prevalence", type = "numeric", default = 1/100, help = "Prevalence limit [default %default]")) %>% 
+  optparse::OptionParser(option_list = .) %>%
+  optparse::parse_args()
+```
+```{r}
+args %>% tibble::enframe(name = "Option", value = "Argument") %>% DT::datatable()
+```
+# Data definitions
+```{r}
+#
+vars <- list(BL_AGE = "Age",
+             MEN = "Men",
+             BMI = "BMI",
+             PREVAL_DIAB.col_from_pheno = "Diabetes",
+             SYSTM = "Systolic blood pressure",
+             DIASM = "Diastolic blood pressure",
+             HFC = "Healthy Food Choices",
+             BP_TREAT = "Antihypertensive medication",
+             PREVAL_HFAIL_STRICT.col_from_pheno = "Heart failure",
+             PREVAL_HIBP.col_from_endpoints = "Prevalent hypertension code",
+             INCIDENT_HIBP.col_from_endpoints = "Incident hypertension code",
+             HIBP_AGEDIFF.col_from_endpoints = "Hypertension code time",
+             PREVAL_RX_RR_SPECIFIC = "Prevalent antihypertensive",
+             INCIDENT_RX_RR_SPECIFIC = "Incident antihypertensive",
+             RX_RR_SPECIFIC_AGEDIFF = "Antihypertensive agediff",
+             PREVAL_HTN = "Prevalent hypertension",
+             INCIDENT_HTN = "Incident hypertension",
+             HTN_AGEDIFF = "Hypertension time (yrs)",
+             CURR_SMOKE = "Smoking",
+             EAST = "Eastern Finland",
+             shannon = "Shannon diversity") 
+```
+```{r}
+tse <- readRDS("data/tse_gg2_MGS_FR02.rds") %>%
+  mia::transformAssay(assay.type = "counts", method = "relabundance") %>% 
+  mia::estimateDiversity(assay.type = "counts", index = "shannon", name = "shannon") %>%
+  tse_add_food_score(HFC) %>%
+  tse_mutate(PREVAL_HTN = ifelse(PREVAL_HIBP.col_from_endpoints + PREVAL_RX_RR_SPECIFIC > 0, 1, 0)) %>%
+  tse_mutate(INCIDENT_HTN = ifelse(INCIDENT_HIBP.col_from_endpoints + INCIDENT_RX_RR_SPECIFIC > 0, 1, 0)) %>%
+  tse_mutate(HTN_AGEDIFF = pmin(HIBP_AGEDIFF.col_from_endpoints, RX_RR_SPECIFIC_AGEDIFF)) %>% 
+  tse_mutate(dplyr::across(c(MEN,
+                             EAST,
+                             BP_TREAT,
+                             CURR_SMOKE,
+                             dplyr::contains("INCIDENT"),
+                             dplyr::contains("PREVAL")), as.factor)) %>%
+  tse_filter(GRAVID %in% c(1, NA), BL_USE_RX_J01_1mo %in% c(0, NA)) %>% 
+  tse_filter(SYSTM < 140, DIASM < 90, PREVAL_HTN == 0, HYPERT_AHA == 0) %>%
+  { if (args$east) tse_filter(., EAST == 0) else . } %>% 
+  { if (args$west) tse_filter(., EAST == 1) else . } %>% 
+  tse_filter(dplyr::if_all(dplyr::one_of(names(vars)), not_na)) %>%
+  tse_select(PREVAL_HTN, INCIDENT_HTN, HTN_AGEDIFF, names(vars))
+```
+# Characteristics
+```{r}
+tse %>%
+  tse_meta(rownames = FALSE) %>%
+  dplyr::mutate(INCIDENT_HTN = factor(ifelse(INCIDENT_HTN == 1, "Incident HTN" , "Without HTN"))) %>%
+  mytableone(vars,fo =  ~ .| INCIDENT_HTN )
+```
+```{r}
+# Filtering
+altExp(tse, "GenusPrevalent") <- mia::agglomerateByPrevalence(tse, rank="Genus", assay.type="relabundance",
+                                        detection = 1/100, prevalence=5/100)
+# Filter out "Other" taxa
+altExp(tse, "GenusPrevalent") <- altExp(tse, "GenusPrevalent")[!(rownames(altExp(tse, "GenusPrevalent")) 
+					%in% c("Other")),]
+```
+```{r}
+# Fit nmf with 5 components
+x <- t(assay(altExp(tse, "GenusPrevalent"), "counts"))
+set.seed(3221)
+nmf5 <- nmf(x, 5)
+
+# Pick NMF components
+H <- nmf5@fit@H
+W <- nmf5@fit@W
+
+# Sort: Bacteroides, Alistipes, Bifidobacterium, Escherichia, Prevotella
+order <- c(2,3,4,1,5)
+H <- H[order, ]
+W <- W[,order]
+
+rownames(H) <- paste("nmf", 1:ncol(W), sep = "")
+colnames(W) <- rownames(H)
+
+# Add enterosignature scores to colData
+# First remove conflicting entries
+colData(tse) <- DataFrame(as.data.frame(colData(tse)) %>% dplyr::select(!starts_with("nmf")))
+W <- as.data.frame(W)
+colData(tse) <- cbind(colData(tse), W)
+
+# Add NMF loadings in the metadata
+metadata(tse)$NMF_loadings <- H
+
+# Obtain the relative abundance of ES in each sample
+Wrel <- t(apply(W, 1, function (x) {x/sum(x)}))
+
+# Define as primary ES the ES of a sample with the highest relative abundance
+colData(tse)$ES_primary <- apply(Wrel, 1, which.max)
+
+saveRDS(tse, "tse_nmf.RData")
+```
+```{r}
+#NMF community types
+# Add the MDS dimensions for plotting
+altExp(tse, "GenusPrevalent") <- runMDS(
+    altExp(tse, "GenusPrevalent"),
+    assay.type = "counts",
+    FUN = vegan::vegdist,
+    method = "bray")
+
+plotReducedDim(
+    altExp(tse, "GenusPrevalent"), "MDS", 
+    point_size = 1, theme_size = 13) +
+    geom_point(aes(color = colData(tse)$ES_primary)) +
+    labs(color = "ES_primary", title = "NMF") + theme_classic()
+```
+```{r}
+## H is genus loadings for each NMF component
+H <- metadata(tse)$NMF_loadings
+
+## W is sample memberships across NMF components
+W <- as.data.frame(colData(tse)) %>% dplyr::select(starts_with("nmf"))
+
+# Simplify genus names
+colnames(H) <- gsub("Genus:", "", colnames(H))
+colnames(H) <- gsub("_\\d+", "", colnames(H))
+
+# Name each topic based on the most influential genus name
+H <- as.data.frame(H)
+
+# Name the components based on the maximum contribution
+rownames(H) <- colnames(H)[apply(H, 1, which.max)]
+
+# Find the most influential topic for each sample
+colnames(W) <- c(1:5)
+colnames(W) <- rownames(H)
+W$clusters <- tse$ES_primary
+```
+
+
+
