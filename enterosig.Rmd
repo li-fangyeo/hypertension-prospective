@@ -161,6 +161,80 @@ colnames(W) <- c(1:5)
 colnames(W) <- rownames(H)
 W$clusters <- tse$ES_primary
 ```
+```{r}
+tseES <- altExp(tse, "GenusPrevalent") %>%
+  mia::estimateDiversity(assay.type = "counts", index = "shannon", name = "shannon") %>%
+  tse_add_food_score(HFC) %>%
+  tse_mutate(PREVAL_HTN = ifelse(PREVAL_HIBP.col_from_endpoints + PREVAL_RX_RR_SPECIFIC > 0, 1, 0)) %>%
+  tse_mutate(INCIDENT_HTN = ifelse(INCIDENT_HIBP.col_from_endpoints + INCIDENT_RX_RR_SPECIFIC > 0, 1, 0)) %>%
+  tse_mutate(HTN_AGEDIFF = pmin(HIBP_AGEDIFF.col_from_endpoints, RX_RR_SPECIFIC_AGEDIFF)) %>% 
+  tse_mutate(dplyr::across(c(MEN,
+                             EAST,
+                             BP_TREAT,
+                             CURR_SMOKE,
+                             dplyr::contains("INCIDENT"),
+                             dplyr::contains("PREVAL")), as.factor)) %>%
+  tse_filter(GRAVID %in% c(1, NA), BL_USE_RX_J01_1mo %in% c(0, NA)) %>% 
+  tse_filter(SYSTM < 140, DIASM < 90, PREVAL_HTN == 0, HYPERT_AHA == 0) %>%
+  { if (args$east) tse_filter(., EAST == 0) else . } %>% 
+  { if (args$west) tse_filter(., EAST == 1) else . } %>% 
+  tse_filter(dplyr::if_all(dplyr::one_of(names(vars)), not_na)) %>%
+  tse_select(PREVAL_HTN, INCIDENT_HTN, HTN_AGEDIFF, names(vars))
+```
+```{r}
+#Merge ES to study cohort
+W <- tibble::rownames_to_column(W, var = "Barcode")
+ES <- as.data.frame(colData(tseES)) %>%
+  tibble::rownames_to_column(var = "Barcode") %>%
+  dplyr::inner_join(W, by = "Barcode")
+```
+```{r}
+ES %>% 
+  survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
+                    scale(shannon) + BL_AGE + MEN + BMI + PREVAL_DIAB.col_from_pheno + HFC +
+                    PREVAL_HFAIL_STRICT.col_from_pheno + CURR_SMOKE, data = .) %>% 
+  broom::tidy() %>%
+  round_numeric_columns() %>% 
+  DT::datatable(caption = "Alpha diversity")
+```
+```{r}
+#Cox model
+coxph_partial <- purrr::partial(survival::coxph,
+                                formula = my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
+                                  term + BL_AGE +
+                                  MEN + BMI + PREVAL_DIAB.col_from_pheno +
+                                  HFC + PREVAL_HFAIL_STRICT.col_from_pheno +
+                                  CURR_SMOKE,
+                                ties = "breslow")%>%
+                      purrr::possibly()
+
+```
+```{r}
+#dichotomise 
+ES$Cluster1 <- ifelse(ES$clusters == 1, 1, 0)
+ES$Cluster2 <- ifelse(ES$clusters == 2, 1, 0)
+ES$Cluster3 <- ifelse(ES$clusters == 3, 1, 0)
+ES$Cluster4 <- ifelse(ES$clusters == 4, 1, 0)
+ES$Cluster5 <- ifelse(ES$clusters == 5, 1, 0)
+
+
+#Esig <- list (var1 = "Phocaeicola_A", var2 = "Prevotella", var3 = "Agathobacter", 
+          #    var4 = "Bacteroides_H", var5 = "Alistipes_A") %>%   as.data.frame() %>% t() %>% as.data.frame()
+
+Esig <- list (var1 = "Cluster1", var2 = "Cluster2", var3 = "Cluster3", 
+              var4 = "Cluster4", var5 = "Cluster5") %>%   as.data.frame() %>% t() %>% as.data.frame()
+try <- Esig %>% dplyr::mutate(results = purrr::map(V1, ~coxph_partial(data = ES %>% dplyr::rename(term = .x)), .progress = TRUE))
+
+try%>% 
+  dplyr::filter(!is.na(results)) %>%
+  dplyr::mutate(results = purrr::map(results, ~broom::tidy(.x, exponentiate = TRUE, conf.int = TRUE)))  %>%
+  tidyr::unnest(results) %>%
+  dplyr::filter(term == "term") %>%
+  dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH")) %>%
+  dplyr::arrange(p.value) %>%
+  dplyr::mutate_if(is.numeric, ~round(.x, digits = 3)) %>%
+  DT::datatable(caption = "Cox model for MetaCyc pathways")
+```
 
 
 
