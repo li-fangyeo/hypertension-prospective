@@ -1,7 +1,7 @@
 ---
 title: "Enterosignatures HTN"
 author: "Li-Fang Yeo"
-date: "2024-10-22"
+date: "2024-10-30"
 output: html_document
 ---
 
@@ -9,24 +9,12 @@ output: html_document
 knitr::opts_chunk$set(echo = FALSE)
 ```
 ```{r}
-library("NMF")
+library(NMF)
 library(magrittr)
+library(scater)
 ```
 ```{r}
 devtools::load_all()
-```
-# Command line arguments
-```{r}
-args <- list(
-  optparse::make_option("--east", action="store_true", default=FALSE, help="Exclude Eastern Finland subpopulation [default \"%default\"]"),
-  optparse::make_option("--west", action="store_true", default=FALSE, help="Exclude Eastern Finland subpopulation [default \"%default\"]"),
-  optparse::make_option("--detection", type = "numeric", default = 0.1/100, help = "Detection limit [default %default]"),
-optparse::make_option("--prevalence", type = "numeric", default = 1/100, help = "Prevalence limit [default %default]")) %>% 
-  optparse::OptionParser(option_list = .) %>%
-  optparse::parse_args()
-```
-```{r}
-args %>% tibble::enframe(name = "Option", value = "Argument") %>% DT::datatable()
 ```
 # Data definitions
 ```{r}
@@ -55,31 +43,7 @@ vars <- list(BL_AGE = "Age",
 ```
 ```{r}
 tse <- readRDS("data/tse_gg2_MGS_FR02.rds") %>%
-  mia::transformAssay(assay.type = "counts", method = "relabundance") %>% 
-  mia::estimateDiversity(assay.type = "counts", index = "shannon", name = "shannon") %>%
-  tse_add_food_score(HFC) %>%
-  tse_mutate(PREVAL_HTN = ifelse(PREVAL_HIBP.col_from_endpoints + PREVAL_RX_RR_SPECIFIC > 0, 1, 0)) %>%
-  tse_mutate(INCIDENT_HTN = ifelse(INCIDENT_HIBP.col_from_endpoints + INCIDENT_RX_RR_SPECIFIC > 0, 1, 0)) %>%
-  tse_mutate(HTN_AGEDIFF = pmin(HIBP_AGEDIFF.col_from_endpoints, RX_RR_SPECIFIC_AGEDIFF)) %>% 
-  tse_mutate(dplyr::across(c(MEN,
-                             EAST,
-                             BP_TREAT,
-                             CURR_SMOKE,
-                             dplyr::contains("INCIDENT"),
-                             dplyr::contains("PREVAL")), as.factor)) %>%
-  tse_filter(GRAVID %in% c(1, NA), BL_USE_RX_J01_1mo %in% c(0, NA)) %>% 
-  tse_filter(SYSTM < 140, DIASM < 90, PREVAL_HTN == 0, HYPERT_AHA == 0) %>%
-  { if (args$east) tse_filter(., EAST == 0) else . } %>% 
-  { if (args$west) tse_filter(., EAST == 1) else . } %>% 
-  tse_filter(dplyr::if_all(dplyr::one_of(names(vars)), not_na)) %>%
-  tse_select(PREVAL_HTN, INCIDENT_HTN, HTN_AGEDIFF, names(vars))
-```
-# Characteristics
-```{r}
-tse %>%
-  tse_meta(rownames = FALSE) %>%
-  dplyr::mutate(INCIDENT_HTN = factor(ifelse(INCIDENT_HTN == 1, "Incident HTN" , "Without HTN"))) %>%
-  mytableone(vars,fo =  ~ .| INCIDENT_HTN )
+  mia::transformAssay(assay.type = "counts", method = "relabundance")
 ```
 ```{r}
 # Filtering
@@ -121,24 +85,8 @@ Wrel <- t(apply(W, 1, function (x) {x/sum(x)}))
 
 # Define as primary ES the ES of a sample with the highest relative abundance
 colData(tse)$ES_primary <- apply(Wrel, 1, which.max)
-
-saveRDS(tse, "tse_nmf.RData")
 ```
-```{r}
-#NMF community types
-# Add the MDS dimensions for plotting
-altExp(tse, "GenusPrevalent") <- runMDS(
-    altExp(tse, "GenusPrevalent"),
-    assay.type = "counts",
-    FUN = vegan::vegdist,
-    method = "bray")
 
-plotReducedDim(
-    altExp(tse, "GenusPrevalent"), "MDS", 
-    point_size = 1, theme_size = 13) +
-    geom_point(aes(color = colData(tse)$ES_primary)) +
-    labs(color = "ES_primary", title = "NMF") + theme_classic()
-```
 ```{r}
 ## H is genus loadings for each NMF component
 H <- metadata(tse)$NMF_loadings
@@ -162,6 +110,22 @@ colnames(W) <- rownames(H)
 W$clusters <- tse$ES_primary
 ```
 ```{r}
+#NMF community types
+# Add the MDS dimensions for plotting
+altExp(tse, "GenusPrevalent") <- runMDS(
+    altExp(tse, "GenusPrevalent"),
+    assay.type = "counts",
+    FUN = vegan::vegdist,
+    method = "bray")
+
+plotReducedDim(
+    altExp(tse, "GenusPrevalent"), "MDS", 
+    point_size = 1, theme_size = 13) +
+    geom_point(aes(color = colData(tse)$ES_primary)) +
+    labs(color = "ES_primary", title = "NMF") + theme_classic()
+```
+```{r}
+#study cohort
 tseES <- altExp(tse, "GenusPrevalent") %>%
   mia::estimateDiversity(assay.type = "counts", index = "shannon", name = "shannon") %>%
   tse_add_food_score(HFC) %>%
@@ -176,8 +140,6 @@ tseES <- altExp(tse, "GenusPrevalent") %>%
                              dplyr::contains("PREVAL")), as.factor)) %>%
   tse_filter(GRAVID %in% c(1, NA), BL_USE_RX_J01_1mo %in% c(0, NA)) %>% 
   tse_filter(SYSTM < 140, DIASM < 90, PREVAL_HTN == 0, HYPERT_AHA == 0) %>%
-  { if (args$east) tse_filter(., EAST == 0) else . } %>% 
-  { if (args$west) tse_filter(., EAST == 1) else . } %>% 
   tse_filter(dplyr::if_all(dplyr::one_of(names(vars)), not_na)) %>%
   tse_select(PREVAL_HTN, INCIDENT_HTN, HTN_AGEDIFF, names(vars))
 ```
@@ -208,6 +170,12 @@ coxph_partial <- purrr::partial(survival::coxph,
                                 ties = "breslow")%>%
                       purrr::possibly()
 
+coxph_mini_partial <- purrr::partial(survival::coxph,
+                                formula = my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
+                                  term + BL_AGE +
+                                  MEN,
+                                ties = "breslow")%>%
+                      purrr::possibly()
 ```
 ```{r}
 #dichotomise 
@@ -217,13 +185,23 @@ ES$Cluster3 <- ifelse(ES$clusters == 3, 1, 0)
 ES$Cluster4 <- ifelse(ES$clusters == 4, 1, 0)
 ES$Cluster5 <- ifelse(ES$clusters == 5, 1, 0)
 
-
-#Esig <- list (var1 = "Phocaeicola_A", var2 = "Prevotella", var3 = "Agathobacter", 
-          #    var4 = "Bacteroides_H", var5 = "Alistipes_A") %>%   as.data.frame() %>% t() %>% as.data.frame()
-
-Esig <- list (var1 = "Cluster1", var2 = "Cluster2", var3 = "Cluster3", 
-              var4 = "Cluster4", var5 = "Cluster5") %>%   as.data.frame() %>% t() %>% as.data.frame()
+Esig <- list (var1 = "Phocaeicola_A", var2 = "Prevotella", var3 = "Agathobacter", 
+              var4 = "Bacteroides_H", var5 = "Alistipes_A") %>%   as.data.frame() %>% t() %>% as.data.frame()
 try <- Esig %>% dplyr::mutate(results = purrr::map(V1, ~coxph_partial(data = ES %>% dplyr::rename(term = .x)), .progress = TRUE))
+
+try%>% 
+  dplyr::filter(!is.na(results)) %>%
+  dplyr::mutate(results = purrr::map(results, ~broom::tidy(.x, exponentiate = TRUE, conf.int = TRUE)))  %>%
+  tidyr::unnest(results) %>%
+  dplyr::filter(term == "term") %>%
+  dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH")) %>%
+  dplyr::arrange(p.value) %>%
+  dplyr::mutate_if(is.numeric, ~round(.x, digits = 3)) %>%
+  DT::datatable(caption = "Cox model for MetaCyc pathways")
+```
+```{r}
+#Cox mini model
+try <- Esig %>% dplyr::mutate(results = purrr::map(V1, ~coxph_mini_partial(data = ES %>% dplyr::rename(term = .x)), .progress = TRUE))
 
 try%>% 
   dplyr::filter(!is.na(results)) %>%
