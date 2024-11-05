@@ -6,19 +6,20 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
 ```
 ```{r}
 library(NMF)
 library(magrittr)
 library(scater)
+
 ```
 ```{r}
 devtools::load_all()
 ```
 # Data definitions
 ```{r}
-#
+#covariates
 vars <- list(BL_AGE = "Age",
              MEN = "Men",
              BMI = "BMI",
@@ -43,19 +44,36 @@ vars <- list(BL_AGE = "Age",
 ```
 ```{r}
 tse <- readRDS("data/tse_gg2_MGS_FR02.rds") %>%
-  mia::transformAssay(assay.type = "counts", method = "relabundance")
+  mia::estimateDiversity(assay.type = "counts", index = "shannon", name = "shannon") %>%
+  tse_add_food_score(HFC) %>%
+  tse_mutate(PREVAL_HTN = ifelse(PREVAL_HIBP.col_from_endpoints + PREVAL_RX_RR_SPECIFIC > 0, 1, 0)) %>%
+  tse_mutate(INCIDENT_HTN = ifelse(INCIDENT_HIBP.col_from_endpoints + INCIDENT_RX_RR_SPECIFIC > 0, 1, 0)) %>%
+  tse_mutate(HTN_AGEDIFF = pmin(HIBP_AGEDIFF.col_from_endpoints, RX_RR_SPECIFIC_AGEDIFF)) %>% 
+  tse_mutate(dplyr::across(c(MEN,
+                             EAST,
+                             BP_TREAT,
+                             CURR_SMOKE,
+                             dplyr::contains("INCIDENT"),
+                             dplyr::contains("PREVAL")), as.factor)) %>%
+  tse_filter(GRAVID %in% c(1, NA), BL_USE_RX_J01_1mo %in% c(0, NA)) %>% 
+  tse_filter(SYSTM < 140, DIASM < 90, PREVAL_HTN == 0, HYPERT_AHA == 0) %>%
+  tse_filter(dplyr::if_all(dplyr::one_of(names(vars)), not_na)) %>%
+  tse_select(PREVAL_HTN, INCIDENT_HTN, HTN_AGEDIFF, names(vars))
+
+tse07<- readRDS("data/tse_greengenes2_MGS.rds") %>%
+   mia::transformAssay(assay.type = "counts", method = "relabundance")
 ```
 ```{r}
 # Filtering
-altExp(tse, "GenusPrevalent") <- mia::agglomerateByPrevalence(tse, rank="Genus", assay.type="relabundance",
+altExp(tse07, "GenusPrevalent") <- mia::agglomerateByPrevalence(tse07, rank="genus", assay.type="relabundance",
                                         detection = 1/100, prevalence=5/100)
 # Filter out "Other" taxa
-altExp(tse, "GenusPrevalent") <- altExp(tse, "GenusPrevalent")[!(rownames(altExp(tse, "GenusPrevalent")) 
+altExp(tse07, "GenusPrevalent") <- altExp(tse07, "GenusPrevalent")[!(rownames(altExp(tse07, "GenusPrevalent")) 
 					%in% c("Other")),]
 ```
 ```{r}
 # Fit nmf with 5 components
-x <- t(assay(altExp(tse, "GenusPrevalent"), "counts"))
+x <- t(assay(altExp(tse07, "GenusPrevalent"), "counts"))
 set.seed(3221)
 nmf5 <- nmf(x, 5)
 
@@ -73,26 +91,26 @@ colnames(W) <- rownames(H)
 
 # Add enterosignature scores to colData
 # First remove conflicting entries
-colData(tse) <- DataFrame(as.data.frame(colData(tse)) %>% dplyr::select(!starts_with("nmf")))
 W <- as.data.frame(W)
-colData(tse) <- cbind(colData(tse), W)
+colData(tse07) <- cbind(colData(tse07), W)
 
 # Add NMF loadings in the metadata
-metadata(tse)$NMF_loadings <- H
+metadata(tse07)$NMF_loadings <- H
 
 # Obtain the relative abundance of ES in each sample
 Wrel <- t(apply(W, 1, function (x) {x/sum(x)}))
 
 # Define as primary ES the ES of a sample with the highest relative abundance
-colData(tse)$ES_primary <- apply(Wrel, 1, which.max)
+colData(tse07)$ES_primary <- apply(Wrel, 1, which.max)
 ```
 
 ```{r}
+#Plotting
 ## H is genus loadings for each NMF component
-H <- metadata(tse)$NMF_loadings
+H <- metadata(tse07)$NMF_loadings
 
 ## W is sample memberships across NMF components
-W <- as.data.frame(colData(tse)) %>% dplyr::select(starts_with("nmf"))
+W <- as.data.frame(colData(tse07)) %>% dplyr::select(starts_with("nmf"))
 
 # Simplify genus names
 colnames(H) <- gsub("Genus:", "", colnames(H))
@@ -107,49 +125,46 @@ rownames(H) <- colnames(H)[apply(H, 1, which.max)]
 # Find the most influential topic for each sample
 colnames(W) <- c(1:5)
 colnames(W) <- rownames(H)
-W$clusters <- tse$ES_primary
+W$clusters <- tse07$ES_primary
 ```
 ```{r}
 #NMF community types
 # Add the MDS dimensions for plotting
-altExp(tse, "GenusPrevalent") <- runMDS(
-    altExp(tse, "GenusPrevalent"),
+altExp(tse07, "GenusPrevalent") <- runMDS(
+    altExp(tse07, "GenusPrevalent"),
     assay.type = "counts",
     FUN = vegan::vegdist,
     method = "bray")
 
 plotReducedDim(
-    altExp(tse, "GenusPrevalent"), "MDS", 
+    altExp(tse07, "GenusPrevalent"), "MDS", 
     point_size = 1, theme_size = 13) +
-    geom_point(aes(color = colData(tse)$ES_primary)) +
+    geom_point(aes(color = colData(tse07)$ES_primary)) +
     labs(color = "ES_primary", title = "NMF") + theme_classic()
 ```
 ```{r}
-#study cohort
-tseES <- altExp(tse, "GenusPrevalent") %>%
-  mia::estimateDiversity(assay.type = "counts", index = "shannon", name = "shannon") %>%
-  tse_add_food_score(HFC) %>%
-  tse_mutate(PREVAL_HTN = ifelse(PREVAL_HIBP.col_from_endpoints + PREVAL_RX_RR_SPECIFIC > 0, 1, 0)) %>%
-  tse_mutate(INCIDENT_HTN = ifelse(INCIDENT_HIBP.col_from_endpoints + INCIDENT_RX_RR_SPECIFIC > 0, 1, 0)) %>%
-  tse_mutate(HTN_AGEDIFF = pmin(HIBP_AGEDIFF.col_from_endpoints, RX_RR_SPECIFIC_AGEDIFF)) %>% 
-  tse_mutate(dplyr::across(c(MEN,
-                             EAST,
-                             BP_TREAT,
-                             CURR_SMOKE,
-                             dplyr::contains("INCIDENT"),
-                             dplyr::contains("PREVAL")), as.factor)) %>%
-  tse_filter(GRAVID %in% c(1, NA), BL_USE_RX_J01_1mo %in% c(0, NA)) %>% 
-  tse_filter(SYSTM < 140, DIASM < 90, PREVAL_HTN == 0, HYPERT_AHA == 0) %>%
-  tse_filter(dplyr::if_all(dplyr::one_of(names(vars)), not_na)) %>%
-  tse_select(PREVAL_HTN, INCIDENT_HTN, HTN_AGEDIFF, names(vars))
-```
-```{r}
-#Merge ES to study cohort
-W <- tibble::rownames_to_column(W, var = "Barcode")
-ES <- as.data.frame(colData(tseES)) %>%
+#dichotomise 
+W$Cluster1 <- ifelse(W$clusters == 1, 1, 0)
+W$Cluster2 <- ifelse(W$clusters == 2, 1, 0)
+W$Cluster3 <- ifelse(W$clusters == 3, 1, 0)
+W$Cluster4 <- ifelse(W$clusters == 4, 1, 0)
+W$Cluster5 <- ifelse(W$clusters == 5, 1, 0)
+
+#Here is where you can merge your tse to have ES cluster
+#matching sample ID from ES to tse sample ID
+a<- colData(tse) %>% 
+   as.data.frame() %>%
+   tibble::rownames_to_column(var = "Barcode")
+
+ES <- W %>%
   tibble::rownames_to_column(var = "Barcode") %>%
-  dplyr::inner_join(W, by = "Barcode")
+  dplyr::inner_join(a, by = "Barcode") %>%
+  DataFrame()
+
+#merge cluster data to 
+colData(tse) <- ES
 ```
+
 ```{r}
 ES %>% 
   survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
@@ -178,15 +193,8 @@ coxph_mini_partial <- purrr::partial(survival::coxph,
                       purrr::possibly()
 ```
 ```{r}
-#dichotomise 
-ES$Cluster1 <- ifelse(ES$clusters == 1, 1, 0)
-ES$Cluster2 <- ifelse(ES$clusters == 2, 1, 0)
-ES$Cluster3 <- ifelse(ES$clusters == 3, 1, 0)
-ES$Cluster4 <- ifelse(ES$clusters == 4, 1, 0)
-ES$Cluster5 <- ifelse(ES$clusters == 5, 1, 0)
-
-Esig <- list (var1 = "Phocaeicola_A", var2 = "Prevotella", var3 = "Agathobacter", 
-              var4 = "Bacteroides_H", var5 = "Alistipes_A") %>%   as.data.frame() %>% t() %>% as.data.frame()
+Esig <- list (var1 = "Cluster1", var2 = "Cluster2", var3 = "Cluster3", 
+              var4 = "Cluster4", var5 = "Cluster5") %>%   as.data.frame() %>% t() %>% as.data.frame()
 try <- Esig %>% dplyr::mutate(results = purrr::map(V1, ~coxph_partial(data = ES %>% dplyr::rename(term = .x)), .progress = TRUE))
 
 try%>% 
@@ -194,7 +202,7 @@ try%>%
   dplyr::mutate(results = purrr::map(results, ~broom::tidy(.x, exponentiate = TRUE, conf.int = TRUE)))  %>%
   tidyr::unnest(results) %>%
   dplyr::filter(term == "term") %>%
-  dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH")) %>%
+  #dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH")) %>%
   dplyr::arrange(p.value) %>%
   dplyr::mutate_if(is.numeric, ~round(.x, digits = 3)) %>%
   DT::datatable(caption = "Cox model for MetaCyc pathways")
@@ -208,7 +216,7 @@ try%>%
   dplyr::mutate(results = purrr::map(results, ~broom::tidy(.x, exponentiate = TRUE, conf.int = TRUE)))  %>%
   tidyr::unnest(results) %>%
   dplyr::filter(term == "term") %>%
-  dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH")) %>%
+  #dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH")) %>%
   dplyr::arrange(p.value) %>%
   dplyr::mutate_if(is.numeric, ~round(.x, digits = 3)) %>%
   DT::datatable(caption = "Cox model for MetaCyc pathways")

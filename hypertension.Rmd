@@ -1,7 +1,7 @@
 ---
 title: "Incident Hypertension microbiome"
 author: "Joonatan Palmu, Li-Fang Yeo"
-date: "2024-06-24"
+date: "2024-11-1"
 output: html_document
 ---
 ```{r setup, include=FALSE} 
@@ -10,6 +10,8 @@ knitr::opts_chunk$set(warning = FALSE)
 # Setup
 ```{r}
 library(magrittr)
+library(ANCOMBC)
+library(mia)
 ```
 ```{r}
 devtools::load_all()
@@ -20,7 +22,7 @@ args <- list(
   optparse::make_option("--east", action="store_true", default=FALSE, help="Exclude Eastern Finland subpopulation [default \"%default\"]"),
   optparse::make_option("--west", action="store_true", default=FALSE, help="Exclude Eastern Finland subpopulation [default \"%default\"]"),
   optparse::make_option("--detection", type = "numeric", default = 0.1/100, help = "Detection limit [default %default]"),
-optparse::make_option("--prevalence", type = "numeric", default = 1/100, help = "Prevalence limit [default %default]")) %>% 
+optparse::make_option("--prevalence", type = "numeric", default = 5/100, help = "Prevalence limit [default %default]")) %>% 
   optparse::OptionParser(option_list = .) %>%
   optparse::parse_args()
 ```
@@ -279,7 +281,6 @@ df_cox_results %>%
   #dplyr::mutate(qval = my_adjust_p(p.value, n = n_independent_axes)) %>%
   dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH"))%>%
   dplyr::arrange(qval_fdr) %>%
-  write.csv("taxa-coxHTN-full.csv")
   DT::datatable()
 ```
 # Perform Cox's models
@@ -362,7 +363,7 @@ df_cox_results %>%
 ```{r}
 tse_species_BC <- mia::subsetByPrevalentFeatures(tse, rank = "Species",
                                               detection = 0.1/100,
-                                              prevalence = 1/100,
+                                              prevalence = 5/100,
                                               as_relative = TRUE)
 ```
 ```{r}
