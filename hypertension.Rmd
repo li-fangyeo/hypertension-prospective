@@ -1,11 +1,11 @@
 ---
 title: "Incident Hypertension microbiome"
 author: "Joonatan Palmu, Li-Fang Yeo"
-date: "2024-11-1"
+date: "2024-12-03"
 output: html_document
 ---
 ```{r setup, include=FALSE} 
-knitr::opts_chunk$set(warning = FALSE) 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
 ```
 # Setup
 ```{r}
@@ -46,15 +46,15 @@ myggsave <- myggsavefactory()
 vars <- list(BL_AGE = "Age",
              MEN = "Men",
              BMI = "BMI",
-             PREVAL_DIAB.col_from_pheno = "Diabetes",
+             PREVAL_DIAB = "Diabetes",
              SYSTM = "Systolic blood pressure",
              DIASM = "Diastolic blood pressure",
              HFC = "Healthy Food Choices",
              BP_TREAT = "Antihypertensive medication",
-             PREVAL_HFAIL_STRICT.col_from_pheno = "Heart failure",
-             PREVAL_HIBP.col_from_endpoints = "Prevalent hypertension code",
-             INCIDENT_HIBP.col_from_endpoints = "Incident hypertension code",
-             HIBP_AGEDIFF.col_from_endpoints = "Hypertension code time",
+             PREVAL_HFAIL_STRICT = "Heart failure",
+             PREVAL_HIBP = "Prevalent hypertension code",
+             INCIDENT_HIBP = "Incident hypertension code",
+             HIBP_AGEDIFF = "Hypertension code time",
              PREVAL_RX_RR_SPECIFIC = "Prevalent antihypertensive",
              INCIDENT_RX_RR_SPECIFIC = "Incident antihypertensive",
              RX_RR_SPECIFIC_AGEDIFF = "Antihypertensive agediff",
@@ -63,16 +63,17 @@ vars <- list(BL_AGE = "Age",
              HTN_AGEDIFF = "Hypertension time (yrs)",
              CURR_SMOKE = "Smoking",
              EAST = "Eastern Finland",
-             shannon = "Shannon diversity") 
+             shannon = "Shannon diversity",
+             total_reads = "Total reads") 
 ```
 ```{r}
-tse <- readRDS("data/tse_gg2_MGS_FR02.rds") %>%
+tse <- readRDS("../data/tse_mgs-20241118_104759.rds") %>%
   mia::transformAssay(assay.type = "counts", method = "relabundance") %>% 
   mia::estimateDiversity(assay.type = "counts", index = "shannon", name = "shannon") %>%
   tse_add_food_score(HFC) %>%
-  tse_mutate(PREVAL_HTN = ifelse(PREVAL_HIBP.col_from_endpoints + PREVAL_RX_RR_SPECIFIC > 0, 1, 0)) %>%
-  tse_mutate(INCIDENT_HTN = ifelse(INCIDENT_HIBP.col_from_endpoints + INCIDENT_RX_RR_SPECIFIC > 0, 1, 0)) %>%
-  tse_mutate(HTN_AGEDIFF = pmin(HIBP_AGEDIFF.col_from_endpoints, RX_RR_SPECIFIC_AGEDIFF)) %>% 
+  tse_mutate(PREVAL_HTN = ifelse(PREVAL_HIBP + PREVAL_RX_RR_SPECIFIC > 0, 1, 0)) %>%
+  tse_mutate(INCIDENT_HTN = ifelse(INCIDENT_HIBP + INCIDENT_RX_RR_SPECIFIC > 0, 1, 0)) %>%
+  tse_mutate(HTN_AGEDIFF = pmin(HIBP_AGEDIFF, RX_RR_SPECIFIC_AGEDIFF)) %>% 
   tse_mutate(dplyr::across(c(MEN,
                              EAST,
                              BP_TREAT,
@@ -84,6 +85,7 @@ tse <- readRDS("data/tse_gg2_MGS_FR02.rds") %>%
   { if (args$east) tse_filter(., EAST == 0) else . } %>% 
   { if (args$west) tse_filter(., EAST == 1) else . } %>% 
   tse_filter(dplyr::if_all(dplyr::one_of(names(vars)), not_na)) %>%
+  tse_filter(total_reads > 35000) %>%
   tse_select(PREVAL_HTN, INCIDENT_HTN, HTN_AGEDIFF, names(vars))
 ```
 # Characteristics
@@ -101,7 +103,7 @@ tse %>%
   tse_meta(rownames = FALSE) %>% 
   survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~ scale(shannon)+ BL_AGE + MEN,
                   data = .) %>% 
-  broom::tidy() %>%
+  broom::tidy(exponentiate = TRUE, conf.int = TRUE) %>%
   round_numeric_columns() %>% 
   DT::datatable(caption = "Alpha diversity")
 ```
@@ -110,84 +112,12 @@ tse %>%
 tse %>%
   tse_meta(rownames = FALSE) %>% 
   survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
-                    scale(shannon) + BL_AGE + MEN + BMI + PREVAL_DIAB.col_from_pheno + HFC +
-                    PREVAL_HFAIL_STRICT.col_from_pheno + CURR_SMOKE, data = .) %>% 
-  broom::tidy() %>%
+                    scale(shannon) + BL_AGE + MEN + BMI + PREVAL_DIAB + HFC +
+                    PREVAL_HFAIL_STRICT + CURR_SMOKE, data = .) %>% 
+  broom::tidy(exponentiate = TRUE, conf.int = TRUE) %>%
   round_numeric_columns() %>% 
+  #write.csv("cox-HTN.csv")
   DT::datatable(caption = "Alpha diversity")
-```
-PERMANOVA
-```{r}
-beta <- tse %>%  mia::mergeFeaturesByRank(rank = "Species") %>% 
-    mia::transformAssay(method = "relabundance") %>%
-    mia::runRDA(assay.type = "relabundance",
-                formula = assay ~ BL_AGE + MEN + INCIDENT_HTN,
-                distance = "bray",
-                na.action = na.exclude)
-```
-```{r}
-# Store results of PERMANOVA test
-rda_info <- attr(SingleCellExperiment::reducedDim(beta, "RDA"), "significance")
-```
-```{r}
-rda_info$permanova |>
-  knitr::kable()
-```
-```{r}
-rda_info$homogeneity |>
-  knitr::kable()
-```
-```{r}
-{ miaViz::plotRDA(beta,
-                "RDA",
-                add.vectors = FALSE,
-                add.ellipse = "colour",
-                colour_by = "INCIDENT_HTN") +
-    ggplot2::scale_colour_manual(name = "Incident hypertension",
-                                 labels = c("0" = "Normotensive",
-                                            "1" = "Hypertensive"),
-                                 values = c("0" = "gray",
-                                            "1" = "black")) } %>% 
-  myggsave("hypertension_rda", width = 10, height = 10)
-```
-Full model
-```{r}
-beta2 <- tse %>%  mia::mergeFeaturesByRank(rank = "Species") %>% 
-    mia::transformAssay(method = "relabundance") %>%
-    mia::runRDA(assay.type = "relabundance",
-                formula = assay ~ BL_AGE + MEN + BMI + PREVAL_DIAB.col_from_pheno + HFC +
-                  PREVAL_HFAIL_STRICT.col_from_pheno + CURR_SMOKE + INCIDENT_HTN,
-                distance = "bray",
-                na.action = na.exclude)
-```
-```{r}
-# Store results of PERMANOVA test
-rda_info <- attr(SingleCellExperiment::reducedDim(beta2, "RDA"), "significance")
-```
-```{r}
-rda_info$permanova |>
-  knitr::kable() %>%
-  write.csv("./permanova-HTN-full.csv")
-```
-
-```{r}
-rda_info$homogeneity |>
-  knitr::kable() %>%
-  write.csv("homogeneity-HTN-full.csv")
-```
-
-```{r}
-{ miaViz::plotRDA(beta2,
-                "RDA",
-                add.vectors = FALSE,
-                add.ellipse = "colour",
-                colour_by = "INCIDENT_HTN") +
-    ggplot2::scale_colour_manual(name = "Incident hypertension",
-                                 labels = c("0" = "Normotensive",
-                                            "1" = "Hypertensive"),
-                                 values = c("0" = "gray",
-                                            "1" = "black")) } %>% 
-  myggsave("hypertension_rda", width = 10, height = 10)
 ```
 # Approximate microbial data dimensions
 ## How many PCs can explain 90% of the data variance
@@ -288,8 +218,8 @@ df_cox_results %>%
 coxph_partial <- purrr::partial(survival::coxph,
                                 formula = my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
                                   taxon + BL_AGE +
-                                  MEN + BMI + PREVAL_DIAB.col_from_pheno +
-                                  HFC + PREVAL_HFAIL_STRICT.col_from_pheno +
+                                  MEN + BMI + PREVAL_DIAB +
+                                  HFC + PREVAL_HFAIL_STRICT +
                                   CURR_SMOKE,
                                 ties = "breslow")
 ```
@@ -315,6 +245,7 @@ df_cox_results %>%
   #dplyr::mutate(qval = my_adjust_p(p.value, n = n_independent_axes)) %>%
   dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH"))%>%
   dplyr::arrange(qval_fdr) %>%
+  #write.csv("species-full-HTN.csv")
   DT::datatable()
 ```
 # Check PH assumptions
@@ -372,7 +303,7 @@ pcol <- glue::glue("q_INCIDENT_HTN1")
 
 ```{r}
 ancombc2_species <- ANCOMBC::ancombc2(data = tse_species_BC,
-            fix_formula = "INCIDENT_HTN + BL_AGE + MEN + BMI + PREVAL_DIAB.col_from_pheno + HFC + PREVAL_HFAIL_STRICT.col_from_pheno + CURR_SMOKE",
+            fix_formula = "INCIDENT_HTN + BL_AGE + MEN + BMI + PREVAL_DIAB + HFC + PREVAL_HFAIL_STRICT + CURR_SMOKE",
                          assay.type = "counts",
                          p_adj_method = "fdr",
                          verbose = TRUE,
@@ -387,5 +318,105 @@ df <- ancombc2_species$res %>%
 df %>%
   round_numeric_columns() %>% 
   DT::datatable(caption = "INCIDENT")
+
+df %>%
+  round_numeric_columns() %>% 
+  write.csv("ancombc-full.csv")
+```
+```{r}
+ancombc2_species <- ANCOMBC::ancombc2(data = tse_species_BC,
+            fix_formula = "INCIDENT_HTN + BL_AGE + MEN",
+                         assay.type = "counts",
+                         p_adj_method = "fdr",
+                         verbose = TRUE,
+                         neg_lb = TRUE)
+```
+```{r}
+df <- ancombc2_species$res %>%
+  dplyr::select(taxon, contains("INCIDENT_HTN")) %>%
+  dplyr::arrange(!!rlang::sym(pcol))
+```
+```{r}
+df %>%
+  round_numeric_columns() %>% 
+  DT::datatable(caption = "INCIDENT")
+
+df %>%
+  round_numeric_columns() %>% 
+  write.csv("Ancombc-mini.csv")
+```
+PERMANOVA
+```{r}
+beta <- tse %>%  mia::mergeFeaturesByRank(rank = "Species") %>% 
+    mia::transformAssay(method = "relabundance") %>%
+    mia::runRDA(assay.type = "relabundance",
+                formula = assay ~ BL_AGE + MEN + INCIDENT_HTN,
+                distance = "bray",
+                na.action = na.exclude)
+```
+```{r}
+# Store results of PERMANOVA test
+rda_info <- attr(SingleCellExperiment::reducedDim(beta, "RDA"), "significance")
+```
+```{r}
+rda_info$permanova |>
+  knitr::kable()
+```
+```{r}
+rda_info$homogeneity |>
+  knitr::kable()
+```
+```{r}
+{ miaViz::plotRDA(beta,
+                "RDA",
+                add.vectors = FALSE,
+                add.ellipse = "colour",
+                colour_by = "INCIDENT_HTN") +
+    ggplot2::scale_colour_manual(name = "Incident hypertension",
+                                 labels = c("0" = "Normotensive",
+                                            "1" = "Hypertensive"),
+                                 values = c("0" = "gray",
+                                            "1" = "black")) } %>% 
+  myggsave("hypertension_rda", width = 10, height = 10)
+```
+Full model
+```{r}
+beta2 <- tse %>%  mia::mergeFeaturesByRank(rank = "Species") %>% 
+    mia::transformAssay(method = "relabundance") %>%
+    mia::runRDA(assay.type = "relabundance",
+                formula = assay ~ BL_AGE + MEN + BMI + PREVAL_DIAB + HFC +
+                  PREVAL_HFAIL_STRICT + CURR_SMOKE + INCIDENT_HTN,
+                distance = "bray",
+                na.action = na.exclude)
+```
+```{r}
+# Store results of PERMANOVA test
+rda_info <- attr(SingleCellExperiment::reducedDim(beta2, "RDA"), "significance")
+```
+```{r}
+rda_info$permanova |>
+  knitr::kable() %>%
+  write.csv("./permanova-HTN-full.csv")
 ```
 
+```{r}
+rda_info$homogeneity |>
+  knitr::kable() %>%
+  write.csv("homogeneity-HTN-full.csv")
+
+saveRDS(beta2, "beta-HTN-full.rds")
+```
+
+```{r}
+{ miaViz::plotRDA(beta2,
+                "RDA",
+                add.vectors = FALSE,
+                add.ellipse = "colour",
+                colour_by = "INCIDENT_HTN") +
+    ggplot2::scale_colour_manual(name = "Incident hypertension",
+                                 labels = c("0" = "Normotensive",
+                                            "1" = "Hypertensive"),
+                                 values = c("0" = "gray",
+                                            "1" = "black")) } %>% 
+  myggsave("hypertension_rda", width = 10, height = 10)
+```
