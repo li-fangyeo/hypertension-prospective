@@ -1,7 +1,7 @@
 ---
 title: "Functional Incident HTN"
 author: "LF Yeo"
-date: "2024-11-11"
+date: "05-12-2024"
 output: html_document
 ---
 
@@ -172,7 +172,7 @@ rm(tse)
 
 df <- dplyr::inner_join(poo_dicho, a, by = "Barcode")
 ```
-Cox model for testing pathways associated with Incident CKD (outcome variable)
+Cox model for testing pathways associated with Incident HTN (outcome variable)
 ```{r}
 ##COX model
 coxph_full_partial <- purrr::partial(survival::coxph,
