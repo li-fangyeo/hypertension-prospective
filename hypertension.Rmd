@@ -12,6 +12,7 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 library(magrittr)
 library(ANCOMBC)
 library(mia)
+library(scater)
 ```
 ```{r}
 devtools::load_all()
@@ -50,8 +51,7 @@ vars <- list(BL_AGE = "Age",
              SYSTM = "Systolic blood pressure",
              DIASM = "Diastolic blood pressure",
              HFC = "Healthy Food Choices",
-             BP_TREAT = "Antihypertensive medication",
-             PREVAL_HFAIL_STRICT = "Heart failure",
+             BP_TREAT = "Self-reported antihypertensive medication",
              PREVAL_HIBP = "Prevalent hypertension code",
              INCIDENT_HIBP = "Incident hypertension code",
              HIBP_AGEDIFF = "Hypertension code time",
@@ -64,12 +64,14 @@ vars <- list(BL_AGE = "Age",
              CURR_SMOKE = "Smoking",
              EAST = "Eastern Finland",
              shannon = "Shannon diversity",
-             total_reads = "Total reads") 
+             observed = "Observed richness",
+             total_reads = "Total reads", 
+             PREVAL_CVD = "Prevalent cardiovascular disease") 
 ```
 ```{r}
 tse <- readRDS("../data/tse_mgs-20241118_104759.rds") %>%
   mia::transformAssay(assay.type = "counts", method = "relabundance") %>% 
-  mia::estimateDiversity(assay.type = "counts", index = "shannon", name = "shannon") %>%
+  mia::addAlpha(assay.type = "counts", index = c("shannon", "observed"), name = c("shannon", "observed"), niter = 10) %>%
   tse_add_food_score(HFC) %>%
   tse_mutate(PREVAL_HTN = ifelse(PREVAL_HIBP + PREVAL_RX_RR_SPECIFIC > 0, 1, 0)) %>%
   tse_mutate(INCIDENT_HTN = ifelse(INCIDENT_HIBP + INCIDENT_RX_RR_SPECIFIC > 0, 1, 0)) %>%
@@ -81,19 +83,19 @@ tse <- readRDS("../data/tse_mgs-20241118_104759.rds") %>%
                              dplyr::contains("INCIDENT"),
                              dplyr::contains("PREVAL")), as.factor)) %>%
   tse_filter(GRAVID %in% c(1, NA), BL_USE_RX_J01_1mo %in% c(0, NA)) %>% 
-  tse_filter(SYSTM < 140, DIASM < 90, PREVAL_HTN == 0, HYPERT_AHA == 0) %>%
-  { if (args$east) tse_filter(., EAST == 0) else . } %>% 
-  { if (args$west) tse_filter(., EAST == 1) else . } %>% 
+  tse_filter(SYSTM < 140, DIASM < 90, PREVAL_HTN == 0, BP_TREAT == 0) %>%
   tse_filter(dplyr::if_all(dplyr::one_of(names(vars)), not_na)) %>%
-  tse_filter(total_reads > 35000) %>%
+  tse_filter(total_reads > 50000) %>%
   tse_select(PREVAL_HTN, INCIDENT_HTN, HTN_AGEDIFF, names(vars))
+
 ```
 # Characteristics
 ```{r}
 tse %>%
   tse_meta(rownames = FALSE) %>%
   dplyr::mutate(INCIDENT_HTN = factor(ifelse(INCIDENT_HTN == 1, "Incident HTN" , "Without HTN"))) %>%
-  mytableone(vars,fo =  ~ .| INCIDENT_HTN )
+  mytableone(vars,fo =  ~ .| INCIDENT_HTN ) %>%
+  write.csv("tableone.csv")
 ```
 
 # Alpha diversity
@@ -101,7 +103,16 @@ tse %>%
 ```{r}
 tse %>%
   tse_meta(rownames = FALSE) %>% 
-  survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~ scale(shannon)+ BL_AGE + MEN,
+  survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~ scale(shannon)+ scale(BL_AGE) + MEN,
+                  data = .) %>% 
+  broom::tidy(exponentiate = TRUE, conf.int = TRUE) %>%
+  round_numeric_columns() %>% 
+  DT::datatable(caption = "Alpha diversity")
+```
+```{r}
+tse %>%
+  tse_meta(rownames = FALSE) %>% 
+  survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~ scale(observed)+ scale(BL_AGE) + MEN,
                   data = .) %>% 
   broom::tidy(exponentiate = TRUE, conf.int = TRUE) %>%
   round_numeric_columns() %>% 
@@ -112,35 +123,35 @@ tse %>%
 tse %>%
   tse_meta(rownames = FALSE) %>% 
   survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
-                    scale(shannon) + BL_AGE + MEN + BMI + PREVAL_DIAB + HFC +
-                    PREVAL_HFAIL_STRICT + CURR_SMOKE, data = .) %>% 
+                    scale(shannon) + scale(BL_AGE) + MEN + scale(BMI) + PREVAL_DIAB + scale(HFC) +
+                    PREVAL_CVD + CURR_SMOKE, data = .) %>% 
   broom::tidy(exponentiate = TRUE, conf.int = TRUE) %>%
   round_numeric_columns() %>% 
   #write.csv("cox-HTN.csv")
   DT::datatable(caption = "Alpha diversity")
 ```
-# Approximate microbial data dimensions
-## How many PCs can explain 90% of the data variance
 ```{r}
-df_counts <- tse %>%
-  mia::subsetByPrevalentFeatures(detection = args$detection, prevalence = args$prevalence, as_relative = TRUE) %>% 
-  SummarizedExperiment::assay("counts") %>%
-  t %>%
-  tibble::as_tibble()
-```
-```{r}
-pca <- prcomp(df_counts)
-```
-```{r}
-n_independent_axes <- broom::tidy(pca, matrix = "eigenvalues") %>%
-  dplyr::filter(cumulative < 0.9) %>%
-  nrow %>%
-  add(1)
+tse %>%
+  tse_meta(rownames = FALSE) %>% 
+  survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
+                    scale(observed) + scale(BL_AGE) + MEN + scale(BMI) + PREVAL_DIAB + scale(HFC) +
+                    PREVAL_CVD + CURR_SMOKE, data = .) %>% 
+  broom::tidy(exponentiate = TRUE, conf.int = TRUE) %>%
+  round_numeric_columns() %>% 
+  #write.csv("cox-HTN.csv")
+  DT::datatable(caption = "Alpha diversity")
+
+tse %>%
+  tse_meta(rownames = FALSE) %>% 
+  survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
+                    scale(observed) + scale(BL_AGE) + MEN + scale(BMI) + PREVAL_DIAB + scale(HFC) +
+                    PREVAL_CVD + CURR_SMOKE, data = .) %>%
+  survival::cox.zph() %>% survminer::ggcoxzph()
 ```
 # Common taxa
 ## Agglomerate prevalent features
 ```{r}
-subset_features_partial <-  purrr::partial(mia::subsetByPrevalentFeatures,
+subset_features_partial <-  purrr::partial(mia::agglomerateByPrevalence,
                                            x = tse,
                                            detection = args$detection,
                                            prevalence = args$prevalence,
@@ -155,7 +166,7 @@ taxa_subsets <- c("Species") %>%
 ```{r}
 melt_tse <- function(x, method = "clr") {
   mia::transformAssay(x, method = method, pseudocount = 1) %>% 
-    mia::meltAssay(add_row_data = TRUE, assay_name = method) %>%
+    mia::meltSE(add_row_data = TRUE, assay.type = method) %>%
     dplyr::mutate(FeatureID = glue::glue("GUT_{FeatureID}")) %>%
     dplyr::mutate(FeatureID = stringr::str_replace_all(FeatureID, c(" " = "_", "-" = "_"))) %>% 
     dplyr::select(SampleID, FeatureID, clr) %>%
@@ -208,7 +219,6 @@ df_cox_results %>%
   dplyr::select(-results) %>% 
   tidyr::unnest(tidy) %>%
   dplyr::filter(stringr::str_detect(term, "taxon")) %>%
-  #dplyr::mutate(qval = my_adjust_p(p.value, n = n_independent_axes)) %>%
   dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH"))%>%
   dplyr::arrange(qval_fdr) %>%
   DT::datatable()
@@ -219,7 +229,7 @@ coxph_partial <- purrr::partial(survival::coxph,
                                 formula = my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
                                   taxon + BL_AGE +
                                   MEN + BMI + PREVAL_DIAB +
-                                  HFC + PREVAL_HFAIL_STRICT +
+                                  HFC + PREVAL_CVD +
                                   CURR_SMOKE,
                                 ties = "breslow")
 ```
@@ -242,10 +252,8 @@ df_cox_results %>%
   dplyr::select(-results) %>% 
   tidyr::unnest(tidy) %>%
   dplyr::filter(stringr::str_detect(term, "taxon")) %>%
-  #dplyr::mutate(qval = my_adjust_p(p.value, n = n_independent_axes)) %>%
   dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH"))%>%
   dplyr::arrange(qval_fdr) %>%
-  #write.csv("species-full-HTN.csv")
   DT::datatable()
 ```
 # Check PH assumptions
@@ -292,7 +300,7 @@ df_cox_results %>%
 ```
 # ANCOM-BC2
 ```{r}
-tse_species_BC <- mia::subsetByPrevalentFeatures(tse, rank = "Species",
+tse_species_BC <- mia::agglomerateByPrevalence(tse, rank = "Species",
                                               detection = 0.1/100,
                                               prevalence = 5/100,
                                               as_relative = TRUE)
@@ -303,7 +311,7 @@ pcol <- glue::glue("q_INCIDENT_HTN1")
 
 ```{r}
 ancombc2_species <- ANCOMBC::ancombc2(data = tse_species_BC,
-            fix_formula = "INCIDENT_HTN + BL_AGE + MEN + BMI + PREVAL_DIAB + HFC + PREVAL_HFAIL_STRICT + CURR_SMOKE",
+            fix_formula = "INCIDENT_HTN + BL_AGE + MEN + BMI + PREVAL_DIAB + HFC + PREVAL_CVD + CURR_SMOKE",
                          assay.type = "counts",
                          p_adj_method = "fdr",
                          verbose = TRUE,
@@ -347,18 +355,51 @@ df %>%
 ```
 PERMANOVA
 ```{r}
+tse<- tse %>%  mia::mergeFeaturesByRank(rank = "Species") %>% 
+    mia::transformAssay(method = "relabundance") %>%
+    scater::runMDS(FUN = getDissimilarity,
+                assay.type = "relabundance",
+                method = "bray",
+                na.action = na.exclude,
+                name = "MDS_bray")
+
+# Create ggplot object
+p <- plotReducedDim(tse, "MDS_bray", colour_by = "INCIDENT_HTN")
+
+# Calculate explained variance
+e <- attr(reducedDim(tse, "MDS_bray"), "eig")
+rel_eig <- e / sum(e[e > 0])
+
+# Add explained variance for each axis
+p <- p + labs(
+    x = paste("PCoA 1 (", round(100 * rel_eig[[1]], 1), "%", ")", sep = ""),
+    y = paste("PCoA 2 (", round(100 * rel_eig[[2]], 1), "%", ")", sep = "")
+    )
+
+p +
+  ggplot2::scale_colour_manual(name = "Incident hypertension",
+                               labels = c("0" = "Normotensive",
+                                          "1" = "Hypertensive"),
+                               values = c("0" = "darkslategrey",
+                                          "1" = "orange")) +
+  ggplot2::theme_classic() +
+  ggplot2::theme(
+  legend.title = element_text(size = 16),
+  legend.text = element_text(size = 14),
+  axis.text = element_text(size = 14),
+  axis.title = element_text(size = 16))
+```
+```{r}
+#Permanova
 beta <- tse %>%  mia::mergeFeaturesByRank(rank = "Species") %>% 
     mia::transformAssay(method = "relabundance") %>%
     mia::runRDA(assay.type = "relabundance",
                 formula = assay ~ BL_AGE + MEN + INCIDENT_HTN,
                 distance = "bray",
                 na.action = na.exclude)
-```
-```{r}
 # Store results of PERMANOVA test
 rda_info <- attr(SingleCellExperiment::reducedDim(beta, "RDA"), "significance")
-```
-```{r}
+
 rda_info$permanova |>
   knitr::kable()
 ```
@@ -385,7 +426,7 @@ beta2 <- tse %>%  mia::mergeFeaturesByRank(rank = "Species") %>%
     mia::transformAssay(method = "relabundance") %>%
     mia::runRDA(assay.type = "relabundance",
                 formula = assay ~ BL_AGE + MEN + BMI + PREVAL_DIAB + HFC +
-                  PREVAL_HFAIL_STRICT + CURR_SMOKE + INCIDENT_HTN,
+                  PREVAL_CVD + CURR_SMOKE + INCIDENT_HTN,
                 distance = "bray",
                 na.action = na.exclude)
 ```

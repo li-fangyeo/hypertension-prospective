@@ -8,21 +8,18 @@ sp_tbl <- df_cox_results %>%
   dplyr::arrange(qval_fdr) %>%
   #dplyr::filter(qval_fdr < 0.05) %>%
   dplyr::slice(1:10) %>%
-  dplyr::select(taxa,estimate,conf.low, conf.high, p.value, qval_fdr) %>%
-  dplyr::mutate(across(everything(),~ gsub("GUT_Family:","", .))) %>%
-  dplyr::mutate_at(c(2:6), as.numeric) %>%
-  dplyr::mutate_at(c(2:4),round,2) %>%
-  dplyr::mutate_at(c(5:6), round, 3)
+  dplyr::select(taxa,estimate,conf.low, conf.high, qval_fdr) %>%
+  dplyr::mutate(across(everything(),~ gsub("GUT_","", .))) %>%
+  dplyr::mutate_at(c(2:5), as.numeric) %>%
+  dplyr::mutate_at(c(2:5),round,2)
 
 
 head(sp_tbl)
 
 sp_tbl$`95% CI` <-  sprintf("%s - %s",
                                       sp_tbl$`conf.low`, sp_tbl$`conf.high`)
-write.table(sp_tbl, file = "taxa-coxHTN-mini-G.csv", sep=",", row.names=FALSE)
-
-#write.csv(sp_tbl$"../HypertensionMicrobiome/taxa-coxHTN-mini.csv", sp_tbl$tbl)
 sp_tbl
+write.table(sp_tbl, file = "taxa-coxHTN-full-F.csv", sep=",", row.names=FALSE)
 
 #Function table
 tbl <- try%>% 
@@ -42,5 +39,5 @@ head(tbl)
 
 tbl$`95% CI` <-  sprintf("%s - %s",
                             tbl$`conf.low`, tbl$`conf.high`)
-write.table(tbl, file = "pathway-rank-mini.csv", sep=",", row.names=FALSE)
+write.table(tbl, file = "pathway-rank-full.csv", sep=",", row.names=FALSE)
   

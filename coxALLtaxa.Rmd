@@ -1,0 +1,226 @@
+---
+title: "cox- genus, family"
+author: "Li-Fang Yeo"
+date: "2024-12-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# Common taxa
+## Agglomerate prevalent features
+```{r}
+subset_features_partial <-  purrr::partial(mia::agglomerateByPrevalence,
+                                           x = tse,
+                                           detection = args$detection,
+                                           prevalence = args$prevalence,
+                                           as_relative = TRUE) %>%
+  purrr::possibly()
+```
+```{r}
+taxa_subsets <- c("Genus") %>%
+  rlang::set_names() %>%
+  purrr::map(subset_features_partial)
+```
+```{r}
+melt_tse <- function(x, method = "clr") {
+  mia::transformAssay(x, method = method, pseudocount = 1) %>% 
+    mia::meltSE(add_row_data = TRUE, assay_name = method) %>%
+    dplyr::mutate(FeatureID = glue::glue("GUT_{FeatureID}")) %>%
+    dplyr::mutate(FeatureID = stringr::str_replace_all(FeatureID, c(" " = "_", "-" = "_"))) %>% 
+    dplyr::select(SampleID, FeatureID, clr) %>%
+    tidyr::spread(FeatureID, clr) %>% 
+    dplyr::full_join(tse_meta(x), by = dplyr::join_by(SampleID == rownames))
+}
+```
+```{r}
+dfs <- taxa_subsets %>%
+  purrr::map(melt_tse, .progress = TRUE)
+```
+# Cox's models
+## Check available taxa
+```{r}
+#Generate a list of taxa, add the word GUT in front of the taxa
+taxa_rank_list <- function(x, y) {
+  list_names <- colnames(x) %>%
+    stringr::str_subset("GUT_") %>%
+    rlang::set_names()
+}
+```
+```{r}
+taxa_rank_list <- dfs %>%
+  purrr::imap(taxa_rank_list, .progress = TRUE)
+```
+# Cox's model minimally adjusted
+## age and sex
+```{r}
+coxph_partial <- purrr::partial(survival::coxph,
+                                formula = my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
+                                  taxon + BL_AGE + MEN,
+                                ties = "breslow")
+```
+```{r}
+cox_model_for_taxon <- function(rank, taxon) {
+  dfs[[rank]] %>%
+    dplyr::rename(taxon := {{taxon}}) %>% 
+    coxph_partial(data = .)
+}
+```
+```{r}
+df_cox_results <- taxa_rank_list %>%
+  purrr::map_df(~tibble::tibble(taxa = .x), .id = "rank") %>% 
+  tidyr::gather(rank, taxa) %>%
+  dplyr::mutate(results = purrr::map2(rank, taxa, cox_model_for_taxon, .progress = TRUE)) %>%
+  dplyr::mutate(tidy = purrr::map(results, ~broom::tidy(.x, exponentiate = TRUE, conf.int = TRUE)))
+```
+```{r}
+df_cox_results %>%
+  dplyr::select(-results) %>% 
+  tidyr::unnest(tidy) %>%
+  dplyr::filter(stringr::str_detect(term, "taxon")) %>%
+  dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH"))%>%
+  dplyr::arrange(qval_fdr) %>%
+  DT::datatable()
+```
+```{r}
+coxph_partial <- purrr::partial(survival::coxph,
+                                formula = my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
+                                  taxon + BL_AGE +
+                                  MEN + BMI + PREVAL_DIAB +
+                                  HFC + PREVAL_CVD +
+                                  CURR_SMOKE,
+                                ties = "breslow")
+```
+```{r}
+cox_model_for_taxon <- function(rank, taxon) {
+  dfs[[rank]] %>%
+    dplyr::rename(taxon := {{taxon}}) %>% 
+    coxph_partial(data = .)
+}
+```
+```{r}
+df_cox_results <- taxa_rank_list %>%
+  purrr::map_df(~tibble::tibble(taxa = .x), .id = "rank") %>% 
+  tidyr::gather(rank, taxa) %>%
+  dplyr::mutate(results = purrr::map2(rank, taxa, cox_model_for_taxon, .progress = TRUE)) %>%
+  dplyr::mutate(tidy = purrr::map(results, ~broom::tidy(.x, exponentiate = TRUE, conf.int = TRUE))) 
+```
+```{r}
+df_cox_results %>%
+  dplyr::select(-results) %>% 
+  tidyr::unnest(tidy) %>%
+  dplyr::filter(stringr::str_detect(term, "taxon")) %>%
+  dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH"))%>%
+  dplyr::arrange(qval_fdr) %>%
+  DT::datatable()
+```
+# Common taxa
+## Agglomerate prevalent features
+```{r}
+subset_features_partial <-  purrr::partial(mia::agglomerateByPrevalence,
+                                           x = tse,
+                                           detection = args$detection,
+                                           prevalence = args$prevalence,
+                                           as_relative = TRUE) %>%
+  purrr::possibly()
+```
+```{r}
+taxa_subsets <- c("Family") %>%
+  rlang::set_names() %>%
+  purrr::map(subset_features_partial)
+```
+```{r}
+melt_tse <- function(x, method = "clr") {
+  mia::transformAssay(x, method = method, pseudocount = 1) %>% 
+    mia::meltSE(add_row_data = TRUE, assay_name = method) %>%
+    dplyr::mutate(FeatureID = glue::glue("GUT_{FeatureID}")) %>%
+    dplyr::mutate(FeatureID = stringr::str_replace_all(FeatureID, c(" " = "_", "-" = "_"))) %>% 
+    dplyr::select(SampleID, FeatureID, clr) %>%
+    tidyr::spread(FeatureID, clr) %>% 
+    dplyr::full_join(tse_meta(x), by = dplyr::join_by(SampleID == rownames))
+}
+```
+```{r}
+dfs <- taxa_subsets %>%
+  purrr::map(melt_tse, .progress = TRUE)
+```
+# Cox's models
+## Check available taxa
+```{r}
+#Generate a list of taxa, add the word GUT in front of the taxa
+taxa_rank_list <- function(x, y) {
+  list_names <- colnames(x) %>%
+    stringr::str_subset("GUT_") %>%
+    rlang::set_names()
+}
+```
+```{r}
+taxa_rank_list <- dfs %>%
+  purrr::imap(taxa_rank_list, .progress = TRUE)
+```
+# Cox's model minimally adjusted
+## age and sex
+```{r}
+coxph_partial <- purrr::partial(survival::coxph,
+                                formula = my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
+                                  taxon + BL_AGE + MEN,
+                                ties = "breslow")
+```
+```{r}
+cox_model_for_taxon <- function(rank, taxon) {
+  dfs[[rank]] %>%
+    dplyr::rename(taxon := {{taxon}}) %>% 
+    coxph_partial(data = .)
+}
+```
+```{r}
+df_cox_results <- taxa_rank_list %>%
+  purrr::map_df(~tibble::tibble(taxa = .x), .id = "rank") %>% 
+  tidyr::gather(rank, taxa) %>%
+  dplyr::mutate(results = purrr::map2(rank, taxa, cox_model_for_taxon, .progress = TRUE)) %>%
+  dplyr::mutate(tidy = purrr::map(results, ~broom::tidy(.x, exponentiate = TRUE, conf.int = TRUE)))
+```
+```{r}
+df_cox_results %>%
+  dplyr::select(-results) %>% 
+  tidyr::unnest(tidy) %>%
+  dplyr::filter(stringr::str_detect(term, "taxon")) %>%
+  #dplyr::mutate(qval = my_adjust_p(p.value, n = n_independent_axes)) %>%
+  dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH"))%>%
+  dplyr::arrange(qval_fdr) %>%
+  DT::datatable()
+```
+```{r}
+coxph_partial <- purrr::partial(survival::coxph,
+                                formula = my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
+                                  taxon + BL_AGE +
+                                  MEN + BMI + PREVAL_DIAB +
+                                  HFC + PREVAL_CVD +
+                                  CURR_SMOKE,
+                                ties = "breslow")
+```
+```{r}
+cox_model_for_taxon <- function(rank, taxon) {
+  dfs[[rank]] %>%
+    dplyr::rename(taxon := {{taxon}}) %>% 
+    coxph_partial(data = .)
+}
+```
+```{r}
+df_cox_results <- taxa_rank_list %>%
+  purrr::map_df(~tibble::tibble(taxa = .x), .id = "rank") %>% 
+  tidyr::gather(rank, taxa) %>%
+  dplyr::mutate(results = purrr::map2(rank, taxa, cox_model_for_taxon, .progress = TRUE)) %>%
+  dplyr::mutate(tidy = purrr::map(results, ~broom::tidy(.x, exponentiate = TRUE, conf.int = TRUE))) 
+```
+```{r}
+df_cox_results %>%
+  dplyr::select(-results) %>% 
+  tidyr::unnest(tidy) %>%
+  dplyr::filter(stringr::str_detect(term, "taxon")) %>%
+  dplyr::mutate(qval_fdr = p.adjust(p.value, method = "BH"))%>%
+  dplyr::arrange(qval_fdr) %>%
+  DT::datatable()
+```

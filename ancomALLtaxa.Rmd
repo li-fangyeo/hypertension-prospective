@@ -1,0 +1,121 @@
+---
+title: "AncomALLtaxa"
+author: "Li-Fang Yeo"
+date: "2024-12-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# ANCOM-BC2
+```{r}
+tse_species_BC <- mia::agglomerateByPrevalence(tse, rank = "Genus",
+                                              detection = 0.1/100,
+                                              prevalence = 5/100,
+                                              as_relative = TRUE)
+```
+```{r}
+pcol <- glue::glue("q_INCIDENT_HTN1")
+```
+
+```{r}
+ancombc2_species <- ANCOMBC::ancombc2(data = tse_species_BC,
+            fix_formula = "INCIDENT_HTN + BL_AGE + MEN + BMI + PREVAL_DIAB + HFC + PREVAL_CVD + CURR_SMOKE",
+                         assay.type = "counts",
+                         p_adj_method = "fdr",
+                         verbose = TRUE,
+                         neg_lb = TRUE)
+```
+```{r}
+df <- ancombc2_species$res %>%
+  dplyr::select(taxon, contains("INCIDENT_HTN")) %>%
+  dplyr::arrange(!!rlang::sym(pcol))
+```
+```{r}
+df %>%
+  round_numeric_columns() %>% 
+  DT::datatable(caption = "INCIDENT")
+
+df %>%
+  round_numeric_columns() %>% 
+  write.csv("ancombc-full-G.csv")
+```
+```{r}
+ancombc2_species <- ANCOMBC::ancombc2(data = tse_species_BC,
+            fix_formula = "INCIDENT_HTN + BL_AGE + MEN",
+                         assay.type = "counts",
+                         p_adj_method = "fdr",
+                         verbose = TRUE,
+                         neg_lb = TRUE)
+```
+```{r}
+df <- ancombc2_species$res %>%
+  dplyr::select(taxon, contains("INCIDENT_HTN")) %>%
+  dplyr::arrange(!!rlang::sym(pcol))
+```
+```{r}
+df %>%
+  round_numeric_columns() %>% 
+  DT::datatable(caption = "INCIDENT")
+
+df %>%
+  round_numeric_columns() %>% 
+  write.csv("Ancombc-mini-G.csv")
+```
+# ANCOM-BC2
+```{r}
+tse_species_BC <- mia::agglomerateByPrevalence(tse, rank = "Family",
+                                              detection = 0.1/100,
+                                              prevalence = 5/100,
+                                              as_relative = TRUE)
+```
+```{r}
+pcol <- glue::glue("q_INCIDENT_HTN1")
+```
+
+```{r}
+ancombc2_species <- ANCOMBC::ancombc2(data = tse_species_BC,
+            fix_formula = "INCIDENT_HTN + BL_AGE + MEN + BMI + PREVAL_DIAB + HFC + PREVAL_CVD + CURR_SMOKE",
+                         assay.type = "counts",
+                         p_adj_method = "fdr",
+                         verbose = TRUE,
+                         neg_lb = TRUE)
+```
+```{r}
+df <- ancombc2_species$res %>%
+  dplyr::select(taxon, contains("INCIDENT_HTN")) %>%
+  dplyr::arrange(!!rlang::sym(pcol))
+```
+```{r}
+df %>%
+  round_numeric_columns() %>% 
+  DT::datatable(caption = "INCIDENT")
+
+df %>%
+  round_numeric_columns() %>% 
+  write.csv("ancombc-full-F.csv")
+```
+```{r}
+ancombc2_species <- ANCOMBC::ancombc2(data = tse_species_BC,
+            fix_formula = "INCIDENT_HTN + BL_AGE + MEN",
+                         assay.type = "counts",
+                         p_adj_method = "fdr",
+                         verbose = TRUE,
+                         neg_lb = TRUE)
+```
+```{r}
+df <- ancombc2_species$res %>%
+  dplyr::select(taxon, contains("INCIDENT_HTN")) %>%
+  dplyr::arrange(!!rlang::sym(pcol))
+```
+```{r}
+df %>%
+  round_numeric_columns() %>% 
+  DT::datatable(caption = "INCIDENT")
+
+df %>%
+  round_numeric_columns() %>% 
+  write.csv("Ancombc-mini-F.csv")
+```
