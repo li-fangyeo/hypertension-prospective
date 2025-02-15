@@ -26,7 +26,7 @@ vars <- list(BL_AGE = "Age",
              DIASM = "Diastolic blood pressure",
              HFC = "Healthy Food Choices",
              BP_TREAT = "Antihypertensive medication",
-             PREVAL_HFAIL_STRICT = "Heart failure",
+             PREVAL_CVD = "Heart failure",
              PREVAL_HIBP = "Prevalent hypertension code",
              INCIDENT_HIBP = "Incident hypertension code",
              HIBP_AGEDIFF = "Hypertension code time",
@@ -179,7 +179,7 @@ coxph_full_partial <- purrr::partial(survival::coxph,
                                 formula = my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
                                   term + BL_AGE +
                                   MEN + BMI + PREVAL_DIAB +
-                                  HFC + PREVAL_HFAIL_STRICT +
+                                  HFC + PREVAL_CVD +
                                   CURR_SMOKE,
                                 ties = "breslow") %>%
                       purrr::possibly()

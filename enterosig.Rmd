@@ -44,6 +44,7 @@ vars <- list(BL_AGE = "Age",
 ```
 ```{r}
 tse <- readRDS("data/tse_gg2_MGS_FR02.rds") %>%
+  mia::transformAssay(assay.type = "counts", method = "relabundance") %>%
   mia::estimateDiversity(assay.type = "counts", index = "shannon", name = "shannon") %>%
   tse_add_food_score(HFC) %>%
   tse_mutate(PREVAL_HTN = ifelse(PREVAL_HIBP.col_from_endpoints + PREVAL_RX_RR_SPECIFIC > 0, 1, 0)) %>%
@@ -60,20 +61,20 @@ tse <- readRDS("data/tse_gg2_MGS_FR02.rds") %>%
   tse_filter(dplyr::if_all(dplyr::one_of(names(vars)), not_na)) %>%
   tse_select(PREVAL_HTN, INCIDENT_HTN, HTN_AGEDIFF, names(vars))
 
-tse07<- readRDS("data/tse_greengenes2_MGS.rds") %>%
+tse<- readRDS("data/tse_greengenes2_MGS.rds") %>%
    mia::transformAssay(assay.type = "counts", method = "relabundance")
 ```
 ```{r}
 # Filtering
-altExp(tse07, "GenusPrevalent") <- mia::agglomerateByPrevalence(tse07, rank="genus", assay.type="relabundance",
+altExp(tse, "GenusPrevalent") <- mia::agglomerateByPrevalence(tse, rank="Genus", assay.type="relabundance",
                                         detection = 1/100, prevalence=5/100)
 # Filter out "Other" taxa
-altExp(tse07, "GenusPrevalent") <- altExp(tse07, "GenusPrevalent")[!(rownames(altExp(tse07, "GenusPrevalent")) 
+altExp(tse, "GenusPrevalent") <- altExp(tse, "GenusPrevalent")[!(rownames(altExp(tse, "GenusPrevalent")) 
 					%in% c("Other")),]
 ```
 ```{r}
 # Fit nmf with 5 components
-x <- t(assay(altExp(tse07, "GenusPrevalent"), "counts"))
+x <- t(assay(altExp(tse, "GenusPrevalent"), "counts"))
 set.seed(3221)
 nmf5 <- nmf(x, 5)
 
@@ -92,25 +93,25 @@ colnames(W) <- rownames(H)
 # Add enterosignature scores to colData
 # First remove conflicting entries
 W <- as.data.frame(W)
-colData(tse07) <- cbind(colData(tse07), W)
+colData(tse) <- cbind(colData(tse), W)
 
 # Add NMF loadings in the metadata
-metadata(tse07)$NMF_loadings <- H
+metadata(tse)$NMF_loadings <- H
 
 # Obtain the relative abundance of ES in each sample
 Wrel <- t(apply(W, 1, function (x) {x/sum(x)}))
 
 # Define as primary ES the ES of a sample with the highest relative abundance
-colData(tse07)$ES_primary <- apply(Wrel, 1, which.max)
+colData(tse)$ES_primary <- apply(Wrel, 1, which.max)
 ```
 
 ```{r}
 #Plotting
 ## H is genus loadings for each NMF component
-H <- metadata(tse07)$NMF_loadings
+H <- metadata(tse)$NMF_loadings
 
 ## W is sample memberships across NMF components
-W <- as.data.frame(colData(tse07)) %>% dplyr::select(starts_with("nmf"))
+W <- as.data.frame(colData(tse)) %>% dplyr::select(starts_with("nmf"))
 
 # Simplify genus names
 colnames(H) <- gsub("Genus:", "", colnames(H))
@@ -125,21 +126,21 @@ rownames(H) <- colnames(H)[apply(H, 1, which.max)]
 # Find the most influential topic for each sample
 colnames(W) <- c(1:5)
 colnames(W) <- rownames(H)
-W$clusters <- tse07$ES_primary
+W$clusters <- tse$ES_primary
 ```
 ```{r}
 #NMF community types
 # Add the MDS dimensions for plotting
-altExp(tse07, "GenusPrevalent") <- runMDS(
-    altExp(tse07, "GenusPrevalent"),
+altExp(tse, "GenusPrevalent") <- runMDS(
+    altExp(tse, "GenusPrevalent"),
     assay.type = "counts",
     FUN = vegan::vegdist,
     method = "bray")
 
 plotReducedDim(
-    altExp(tse07, "GenusPrevalent"), "MDS", 
+    altExp(tse, "GenusPrevalent"), "MDS", 
     point_size = 1, theme_size = 13) +
-    geom_point(aes(color = colData(tse07)$ES_primary)) +
+    geom_point(aes(color = colData(tse)$ES_primary)) +
     labs(color = "ES_primary", title = "NMF") + theme_classic()
 ```
 ```{r}
