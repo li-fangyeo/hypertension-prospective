@@ -1,7 +1,7 @@
 ---
 title: "Incident Hypertension microbiome"
 author: "Joonatan Palmu, Li-Fang Yeo"
-date: "2024-12-03"
+date: "2025-06-30"
 output: html_document
 ---
 ```{r setup, include=FALSE} 
@@ -69,9 +69,9 @@ vars <- list(BL_AGE = "Age",
              PREVAL_CVD = "Prevalent cardiovascular disease") 
 ```
 ```{r}
-tse <- readRDS("../data/tse_mgs-20241118_104759.rds") %>%
+tse <- readRDS("../../data/tse_mgs-20241118_104759.rds") %>%
   mia::transformAssay(assay.type = "counts", method = "relabundance") %>% 
-  mia::addAlpha(assay.type = "counts", index = c("shannon", "observed"), name = c("shannon", "observed"), niter = 10) %>%
+  mia::addAlpha(assay.type = "counts", index = c("shannon", "observed"), name = c("shannon", "observed")) %>%
   tse_add_food_score(HFC) %>%
   tse_mutate(PREVAL_HTN = ifelse(PREVAL_HIBP + PREVAL_RX_RR_SPECIFIC > 0, 1, 0)) %>%
   tse_mutate(INCIDENT_HTN = ifelse(INCIDENT_HIBP + INCIDENT_RX_RR_SPECIFIC > 0, 1, 0)) %>%
@@ -94,7 +94,7 @@ tse <- readRDS("../data/tse_mgs-20241118_104759.rds") %>%
 tse %>%
   tse_meta(rownames = FALSE) %>%
   dplyr::mutate(INCIDENT_HTN = factor(ifelse(INCIDENT_HTN == 1, "Incident HTN" , "Without HTN"))) %>%
-  mytableone(vars,fo =  ~ .| INCIDENT_HTN ) %>%
+  mytableone(vars,fo =  ~ .| INCIDENT_HTN ) #%>%
   write.csv("tableone.csv")
 ```
 
