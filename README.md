@@ -1,5 +1,8 @@
 This are codes for the prospective analysis of hypertension and gut microbiome in FINRISK2002 cohort
 
+#30062025
+-Fixed alpha diversity analysis
+
 #14022025
 -Updated to Mia 1.15.17
 
