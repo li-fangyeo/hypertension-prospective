@@ -94,8 +94,27 @@ tse <- readRDS("../../data/tse_mgs-20241118_104759.rds") %>%
 tse %>%
   tse_meta(rownames = FALSE) %>%
   dplyr::mutate(INCIDENT_HTN = factor(ifelse(INCIDENT_HTN == 1, "Incident HTN" , "Without HTN"))) %>%
-  mytableone(vars,fo =  ~ .| INCIDENT_HTN ) #%>%
+  mytableone(vars,fo =  ~ .| INCIDENT_HTN )
   write.csv("tableone.csv")
+  
+
+```
+```{r}
+library(survivalpwr)
+
+#Shannon
+pwr_coxph(
+  hr = 1.294,
+  eventprob = 0.2038659,
+  stddev = 0.42,
+  n = 3311)
+
+#Systolic blood pressure
+pwr_coxph(
+  hr = 1.011,
+  eventprob = 0.2038659,
+  stddev = 9.9,
+  n = 3311)
 ```
 
 # Alpha diversity
@@ -123,8 +142,7 @@ tse %>%
 tse %>%
   tse_meta(rownames = FALSE) %>% 
   survival::coxph(my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
-                    scale(shannon) + scale(BL_AGE) + MEN + scale(BMI) + PREVAL_DIAB + scale(HFC) +
-                    PREVAL_CVD + CURR_SMOKE, data = .) %>% 
+                    scale(shannon) + scale(BL_AGE) + MEN + scale(BMI) + PREVAL_DIAB +scale(HFC) + PREVAL_CVD + CURR_SMOKE, data = .) %>% 
   broom::tidy(exponentiate = TRUE, conf.int = TRUE) %>%
   round_numeric_columns() %>% 
   #write.csv("cox-HTN.csv")
@@ -159,7 +177,7 @@ subset_features_partial <-  purrr::partial(mia::agglomerateByPrevalence,
   purrr::possibly()
 ```
 ```{r}
-taxa_subsets <- c("Species") %>%
+taxa_subsets <- c("Genus") %>%
   rlang::set_names() %>%
   purrr::map(subset_features_partial)
 ```
@@ -231,6 +249,14 @@ coxph_partial <- purrr::partial(survival::coxph,
                                   MEN + BMI + PREVAL_DIAB +
                                   HFC + PREVAL_CVD +
                                   CURR_SMOKE,
+                                ties = "breslow")
+
+coxph_partial <- purrr::partial(survival::coxph,
+                                formula = my_surv(HTN_AGEDIFF, INCIDENT_HTN) ~
+                                  taxon + BL_AGE +
+                                  MEN +  PREVAL_DIAB +
+                                  HFC + PREVAL_CVD +
+                                  CURR_SMOKE + SYSTM,
                                 ties = "breslow")
 ```
 ```{r}
